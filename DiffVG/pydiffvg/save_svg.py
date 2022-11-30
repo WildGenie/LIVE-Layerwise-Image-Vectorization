@@ -97,7 +97,7 @@ def save_svg(filename, width, height, shapes, shape_groups, use_gamma = False, b
             shape_node = etree.SubElement(g, 'polygon')
             points = shape.points.data.cpu().numpy()
             path_str = ''
-            for j in range(0, shape.points.shape[0]):
+            for j in range(shape.points.shape[0]):
                 path_str += '{} {}'.format(points[j, 0], points[j, 1])
                 if j != shape.points.shape[0] - 1:
                     path_str +=  ' '
@@ -110,7 +110,7 @@ def save_svg(filename, width, height, shapes, shape_groups, use_gamma = False, b
             num_points = shape.points.shape[0]
             path_str = 'M {} {}'.format(points[0, 0], points[0, 1])
             point_id = 1
-            for j in range(0, num_segments):
+            for j in range(num_segments):
                 if num_control_points[j] == 0:
                     p = point_id % num_points
                     path_str += ' L {} {}'.format(\

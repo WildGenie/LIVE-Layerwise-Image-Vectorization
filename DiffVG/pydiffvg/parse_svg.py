@@ -26,7 +26,7 @@ def parse_style(s, defs):
         if len(key_value) == 2:
             key = key_value[0].strip()
             value = key_value[1].strip()
-            if key == 'fill' or key == 'stroke':
+            if key in ['fill', 'stroke']:
                 # Special case: convert colors into tensor in definitions so
                 # that different shapes can share the same color
                 value = parse_color(value, defs)
@@ -68,14 +68,12 @@ def parse_color(s, defs):
     elif s[:4] == 'rgb(':
         rgb = s[4:-1].split(',')
         color = torch.tensor([int(rgb[0]) / 255.0, int(rgb[1]) / 255.0, int(rgb[2]) / 255.0, 1.0])
-    elif s == 'none':
-        return None
     else:
-        try : 
+        try: 
             rgba = matplotlib.colors.to_rgba(s)
             color = torch.tensor(rgba)
-        except ValueError : 
-            warnings.warn('Unknown color command ' + s)
+        except ValueError: 
+            warnings.warn(f'Unknown color command {s}')
     return color
 
 # https://github.com/mathandy/svgpathtools/blob/7ebc56a831357379ff22216bec07e2c12e8c5bc6/svgpathtools/parser.py
@@ -86,7 +84,7 @@ def _parse_transform_substr(transform_substr):
 
     transform = np.identity(3)
     if 'matrix' in type_str:
-        transform[0:2, 0:3] = np.array([values[0:6:2], values[1:6:2]])
+        transform[0:2, 0:3] = np.array([values[:6:2], values[1:6:2]])
     elif 'translate' in transform_substr:
         transform[0, 2] = values[0]
         if len(values) > 1:
@@ -98,10 +96,7 @@ def _parse_transform_substr(transform_substr):
         transform[1, 1] = y_scale
     elif 'rotate' in transform_substr:
         angle = values[0] * np.pi / 180.0
-        if len(values) == 3:
-            offset = values[1:3]
-        else:
-            offset = (0, 0)
+        offset = values[1:3] if len(values) == 3 else (0, 0)
         tf_offset = np.identity(3)
         tf_offset[0:2, 2:3] = np.array([[offset[0]], [offset[1]]])
         tf_rotate = np.identity(3)
@@ -288,13 +283,10 @@ def parse_defs(node, transform, defs):
 def parse_common_attrib(node, transform, fill_color, defs):
     attribs = {}
     if 'class' in node.attrib:
-        attribs.update(defs[node.attrib['class']])
+        attribs |= defs[node.attrib['class']]
     attribs.update(node.attrib)
 
-    name = ''
-    if 'id' in node.attrib:
-        name = node.attrib['id']
-
+    name = node.attrib['id'] if 'id' in node.attrib else ''
     stroke_color = None
     stroke_width = torch.tensor(0.5)
     use_even_odd_rule = False
@@ -319,7 +311,7 @@ def parse_common_attrib(node, transform, fill_color, defs):
         elif attribs['fill-rule'] == "nonzero":
             use_even_odd_rule = False
         else:
-            warnings.warn('Unknown fill-rule: {}'.format(attribs['fill-rule']))
+            warnings.warn(f"Unknown fill-rule: {attribs['fill-rule']}")
 
     if 'stroke' in attribs:
         stroke_color = parse_color(attribs['stroke'], defs)
@@ -345,24 +337,23 @@ def parse_common_attrib(node, transform, fill_color, defs):
             elif style['fill-rule'] == "nonzero":
                 use_even_odd_rule = False
             else:
-                warnings.warn('Unknown fill-rule: {}'.format(style['fill-rule']))
+                warnings.warn(f"Unknown fill-rule: {style['fill-rule']}")
         # Ignore opacity if the color is a gradient
         if isinstance(fill_color, torch.Tensor):
             fill_color[3] = fill_opacity
-        if 'stroke' in style:
-            if style['stroke'] != 'none':
-                stroke_color = parse_color(style['stroke'], defs)
-                # Ignore opacity if the color is a gradient
-                if isinstance(stroke_color, torch.Tensor):
-                    if 'stroke-opacity' in style:
-                        stroke_color[3] = float(style['stroke-opacity'])
-                    if 'opacity' in style:
-                        stroke_color[3] *= float(style['opacity'])
-                if 'stroke-width' in style:
-                    stroke_width = style['stroke-width']
-                    if stroke_width[-2:] == 'px':
-                        stroke_width = stroke_width[:-2]
-                    stroke_width = torch.tensor(float(stroke_width) / 2.0)
+        if 'stroke' in style and style['stroke'] != 'none':
+            stroke_color = parse_color(style['stroke'], defs)
+            # Ignore opacity if the color is a gradient
+            if isinstance(stroke_color, torch.Tensor):
+                if 'stroke-opacity' in style:
+                    stroke_color[3] = float(style['stroke-opacity'])
+                if 'opacity' in style:
+                    stroke_color[3] *= float(style['opacity'])
+            if 'stroke-width' in style:
+                stroke_width = style['stroke-width']
+                if stroke_width[-2:] == 'px':
+                    stroke_width = stroke_width[:-2]
+                stroke_width = torch.tensor(float(stroke_width) / 2.0)
 
         if isinstance(fill_color, pydiffvg.LinearGradient):
             fill_color.begin = new_transform @ torch.cat((fill_color.begin, torch.ones([1])))
@@ -379,12 +370,12 @@ def parse_common_attrib(node, transform, fill_color, defs):
             stroke_color.end = stroke_color.end / stroke_color.end[2]
             stroke_color.end = stroke_color.end[:2]
         if 'filter' in style:
-            print('*** WARNING ***: Ignoring filter for path with id "{}"'.format(name))
+            print(f'*** WARNING ***: Ignoring filter for path with id "{name}"')
 
     return new_transform, fill_color, stroke_color, stroke_width, use_even_odd_rule
 
 def is_shape(tag):
-    return tag == 'path' or tag == 'polygon' or tag == 'line' or tag == 'circle' or tag == 'rect'
+    return tag in ['path', 'polygon', 'line', 'circle', 'rect']
 
 def parse_shape(node, transform, fill_color, shapes, shape_groups, defs):
     tag = remove_namespaces(node.tag)
@@ -392,16 +383,14 @@ def parse_shape(node, transform, fill_color, shapes, shape_groups, defs):
         parse_common_attrib(node, transform, fill_color, defs)
     if tag == 'path':
         d = node.attrib['d']
-        name = ''
-        if 'id' in node.attrib:
-            name = node.attrib['id']
+        name = node.attrib['id'] if 'id' in node.attrib else ''
         force_closing = new_fill_color is not None
         paths = pydiffvg.from_svg_path(d, new_transform, force_closing)
         for idx, path in enumerate(paths):
             assert(path.points.shape[1] == 2)
             path.stroke_width = stroke_width
             path.source_id = name
-            path.id = "{}-{}".format(name,idx) if len(paths)>1 else name
+            path.id = f"{name}-{idx}" if len(paths)>1 else name
         prev_shapes_size = len(shapes)
         shapes = shapes + paths
         shape_ids = torch.tensor(list(range(prev_shapes_size, len(shapes))))
@@ -412,9 +401,7 @@ def parse_shape(node, transform, fill_color, shapes, shape_groups, defs):
             use_even_odd_rule = use_even_odd_rule,
             id = name))
     elif tag == 'polygon':
-        name = ''
-        if 'id' in node.attrib:
-            name = node.attrib['id']
+        name = node.attrib['id'] if 'id' in node.attrib else ''
         force_closing = new_fill_color is not None
         pts = node.attrib['points'].strip()
         pts = pts.split(' ')
@@ -454,9 +441,7 @@ def parse_shape(node, transform, fill_color, shapes, shape_groups, defs):
         radius = float(node.attrib['r'])
         cx = float(node.attrib['cx'])
         cy = float(node.attrib['cy'])
-        name = ''
-        if 'id' in node.attrib:
-            name = node.attrib['id']
+        name = node.attrib['id'] if 'id' in node.attrib else ''
         center = torch.tensor([cx, cy])
         circle = pydiffvg.Circle(radius = torch.tensor(radius),
                                  center = center)
@@ -474,9 +459,7 @@ def parse_shape(node, transform, fill_color, shapes, shape_groups, defs):
         ry = float(node.attrib['ry'])
         cx = float(node.attrib['cx'])
         cy = float(node.attrib['cy'])
-        name = ''
-        if 'id' in node.attrib:
-            name = node.attrib['id']
+        name = node.attrib['id'] if 'id' in node.attrib else ''
         center = torch.tensor([cx, cy])
         circle = pydiffvg.Circle(radius = torch.tensor(radius),
                                  center = center)

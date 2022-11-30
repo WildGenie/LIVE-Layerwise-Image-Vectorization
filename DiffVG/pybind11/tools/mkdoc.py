@@ -74,11 +74,11 @@ def d(s):
 def sanitize_name(name):
     name = re.sub(r'type-parameter-0-([0-9]+)', r'T\1', name)
     for k, v in CPP_OPERATORS.items():
-        name = name.replace('operator%s' % k, 'operator_%s' % v)
+        name = name.replace(f'operator{k}', f'operator_{v}')
     name = re.sub('<.*>', '', name)
     name = ''.join([ch if ch.isalnum() else '_' for ch in name])
     name = re.sub('_$', '', re.sub('_+', '_', name))
-    return '__doc_' + name
+    return f'__doc_{name}'
 
 
 def process_comment(comment):
@@ -170,10 +170,7 @@ def process_comment(comment):
     in_code_segment = False
     for x in re.split(r'(```)', s):
         if x == '```':
-            if not in_code_segment:
-                result += '```\n'
-            else:
-                result += '\n```\n\n'
+            result += '\n```\n\n' if in_code_segment else '```\n'
             in_code_segment = not in_code_segment
         elif in_code_segment:
             result += x.strip()
@@ -243,9 +240,9 @@ def read_args(args):
 
     if platform.system() == 'Darwin':
         dev_path = '/Applications/Xcode.app/Contents/Developer/'
-        lib_dir = dev_path + 'Toolchains/XcodeDefault.xctoolchain/usr/lib/'
-        sdk_dir = dev_path + 'Platforms/MacOSX.platform/Developer/SDKs'
-        libclang = lib_dir + 'libclang.dylib'
+        lib_dir = f'{dev_path}Toolchains/XcodeDefault.xctoolchain/usr/lib/'
+        sdk_dir = f'{dev_path}Platforms/MacOSX.platform/Developer/SDKs'
+        libclang = f'{lib_dir}libclang.dylib'
 
         if os.path.exists(libclang):
             cindex.Config.set_library_path(os.path.dirname(libclang))
@@ -267,12 +264,18 @@ def read_args(args):
         # Try to autodetect, preferring the highest numbered version.
         def clang_folder_version(d):
             return [int(ver) for ver in re.findall(r'(?<!lib)(?<!\d)\d+', d)]
-        clang_include_dir = max((
-            path
-            for libdir in ['lib64', 'lib', 'lib32']
-            for path in glob('/usr/%s/clang/*/include' % libdir)
-            if os.path.isdir(path)
-        ), default=None, key=clang_folder_version)
+
+        clang_include_dir = max(
+            (
+                path
+                for libdir in ['lib64', 'lib', 'lib32']
+                for path in glob(f'/usr/{libdir}/clang/*/include')
+                if os.path.isdir(path)
+            ),
+            default=None,
+            key=clang_folder_version,
+        )
+
         if clang_include_dir:
             parameters.extend(['-isystem', clang_include_dir])
 
@@ -282,7 +285,7 @@ def read_args(args):
         else:
             filenames.append(item)
 
-    if len(filenames) == 0:
+    if not filenames:
         raise NoFilenamesError("args parameter did not contain any filenames")
 
     return parameters, filenames
@@ -296,7 +299,7 @@ def extract_all(args):
         thr.start()
 
     print('Waiting for jobs to finish ..', file=sys.stderr)
-    for i in range(job_count):
+    for _ in range(job_count):
         job_semaphore.acquire()
 
     return output
@@ -383,5 +386,5 @@ if __name__ == '__main__':
     try:
         mkdoc(sys.argv[1:])
     except NoFilenamesError:
-        print('Syntax: %s [.. a list of header files ..]' % sys.argv[0])
+        print(f'Syntax: {sys.argv[0]} [.. a list of header files ..]')
         exit(-1)

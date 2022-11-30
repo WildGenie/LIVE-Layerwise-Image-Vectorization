@@ -9,10 +9,10 @@ from pybind11_tests import stl_binders as m
 def test_vector_int():
     v_int = m.VectorInt([0, 0])
     assert len(v_int) == 2
-    assert bool(v_int) is True
+    assert bool(v_int)
 
     # test construction from a generator
-    v_int1 = m.VectorInt(x for x in range(5))
+    v_int1 = m.VectorInt(iter(range(5)))
     assert v_int1 == m.VectorInt([0, 1, 2, 3, 4])
 
     v_int2 = m.VectorInt([0, 0])
@@ -50,7 +50,7 @@ def test_vector_int():
     assert v_int2 == m.VectorInt([0, 99, 2, 3, 4, 5, 6, 7])
 
     # test extending from a generator
-    v_int2.extend(x for x in range(5))
+    v_int2.extend(iter(range(5)))
     assert v_int2 == m.VectorInt([0, 99, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4])
 
     # test negative indexing
@@ -183,7 +183,7 @@ def test_map_string_double_const():
 def test_noncopyable_containers():
     # std::vector
     vnc = m.get_vnc(5)
-    for i in range(0, 5):
+    for i in range(5):
         assert vnc[i].value == i + 1
 
     for i, j in enumerate(vnc, start=1):
@@ -191,14 +191,11 @@ def test_noncopyable_containers():
 
     # std::deque
     dnc = m.get_dnc(5)
-    for i in range(0, 5):
+    for i in range(5):
         assert dnc[i].value == i + 1
 
-    i = 1
-    for j in dnc:
+    for i, j in enumerate(dnc, start=1):
         assert(j.value == i)
-        i += 1
-
     # std::map
     mnc = m.get_mnc(5)
     for i in range(1, 6):
@@ -226,7 +223,7 @@ def test_noncopyable_containers():
     # nested std::map<std::vector>
     nvnc = m.get_nvnc(5)
     for i in range(1, 6):
-        for j in range(0, 5):
+        for j in range(5):
             assert nvnc[i][j].value == j + 1
 
     # Note: maps do not have .values()

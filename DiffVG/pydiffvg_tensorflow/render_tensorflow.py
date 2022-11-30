@@ -111,11 +111,10 @@ def serialize_scene(canvas_width,
         Given a list of shapes, convert them to a linear list of argument,
         so that we can use it in TF.
     """
-    with tf.device('/device:cpu:' + str(pydiffvg.get_cpu_device_id())):
+    with tf.device(f'/device:cpu:{str(pydiffvg.get_cpu_device_id())}'):
         num_shapes = len(shapes)
         num_shape_groups = len(shape_groups)
-        args = []
-        args.append(tf.constant(canvas_width))
+        args = [tf.constant(canvas_width)]
         args.append(tf.constant(canvas_height))
         args.append(tf.constant(num_shapes))
         args.append(tf.constant(num_shape_groups))
@@ -178,9 +177,11 @@ def serialize_scene(canvas_width,
             if shape_group.fill_color is not None:
                 # go through the underlying shapes and check if they are all closed
                 for shape_id in shape_group.shape_ids:
-                    if isinstance(shapes[shape_id], pydiffvg.Path):
-                        if not shapes[shape_id].is_closed:
-                            warnings.warn("Detected non-closed paths with fill color. This might causes unexpected results.", Warning)
+                    if (
+                        isinstance(shapes[shape_id], pydiffvg.Path)
+                        and not shapes[shape_id].is_closed
+                    ):
+                        warnings.warn("Detected non-closed paths with fill color. This might causes unexpected results.", Warning)
 
             # Stroke color
             if shape_group.stroke_color is None:
@@ -219,7 +220,7 @@ def forward(width,
         Forward rendering pass: given a serialized scene and output an image.
     """
     # Unpack arguments
-    with tf.device('/device:cpu:' + str(pydiffvg.get_cpu_device_id())):
+    with tf.device(f'/device:cpu:{str(pydiffvg.get_cpu_device_id())}'):
         current_index = 0
         canvas_width = int(args[current_index])
         current_index += 1
@@ -237,7 +238,7 @@ def forward(width,
         shape_groups = []
         shape_contents = [] # Important to avoid GC deleting the shapes
         color_contents = [] # Same as above
-        for shape_id in range(num_shapes):
+        for _ in range(num_shapes):
             shape_type = ShapeType.asShapeType(args[current_index])
             current_index += 1
             if shape_type == diffvg.ShapeType.circle:
@@ -285,7 +286,7 @@ def forward(width,
                 shape_type, shape.get_ptr(), float(stroke_width)))
             shape_contents.append(shape)
 
-        for shape_group_id in range(num_shape_groups):
+        for _ in range(num_shape_groups):
             shape_ids = args[current_index]
             current_index += 1
             fill_color_type = ColorType.asColorType(args[current_index])
@@ -516,7 +517,7 @@ def render(*x):
         if print_timing:
             print('Backward pass, time: %.5f s' % time_elapsed)
 
-        with tf.device('/device:cpu:' + str(pydiffvg.get_cpu_device_id())):
+        with tf.device(f'/device:cpu:{str(pydiffvg.get_cpu_device_id())}'):
             d_args = []
             d_args.append(None) # width
             d_args.append(None) # height
