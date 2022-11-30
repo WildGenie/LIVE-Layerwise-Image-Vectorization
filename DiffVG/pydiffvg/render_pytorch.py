@@ -35,14 +35,16 @@ class RenderFunction(torch.autograd.Function):
         """
         num_shapes = len(shapes)
         num_shape_groups = len(shape_groups)
-        args = []
-        args.append(canvas_width)
-        args.append(canvas_height)
-        args.append(num_shapes)
-        args.append(num_shape_groups)
-        args.append(output_type)
-        args.append(use_prefiltering)
-        args.append(eval_positions.to(pydiffvg.get_device()))
+        args = [
+            canvas_width,
+            canvas_height,
+            num_shapes,
+            num_shape_groups,
+            output_type,
+            use_prefiltering,
+            eval_positions.to(pydiffvg.get_device()),
+        ]
+
         for shape in shapes:
             use_thickness = False
             if isinstance(shape, pydiffvg.Circle):
@@ -70,8 +72,7 @@ class RenderFunction(torch.autograd.Function):
                     args.append(shape.stroke_width.cpu())
                 else:
                     args.append(None)
-                args.append(shape.is_closed)
-                args.append(shape.use_distance_approx)
+                args.extend((shape.is_closed, shape.use_distance_approx))
             elif isinstance(shape, pydiffvg.Polygon):
                 assert(shape.points.is_contiguous())
                 assert(shape.points.shape[1] == 2)
@@ -80,10 +81,7 @@ class RenderFunction(torch.autograd.Function):
                     args.append(torch.zeros(shape.points.shape[0], dtype = torch.int32))
                 else:
                     args.append(torch.zeros(shape.points.shape[0] - 1, dtype = torch.int32))
-                args.append(shape.points.cpu())
-                args.append(None)  
-                args.append(shape.is_closed)
-                args.append(False) # use_distance_approx
+                args.extend((shape.points.cpu(), None, shape.is_closed, False))
             elif isinstance(shape, pydiffvg.Rect):
                 assert(shape.p_min.is_contiguous())
                 assert(shape.p_max.is_contiguous())
@@ -131,9 +129,11 @@ class RenderFunction(torch.autograd.Function):
             if shape_group.fill_color is not None:
                 # go through the underlying shapes and check if they are all closed
                 for shape_id in shape_group.shape_ids:
-                    if isinstance(shapes[shape_id], pydiffvg.Path):
-                        if not shapes[shape_id].is_closed:
-                            warnings.warn("Detected non-closed paths with fill color. This might causes unexpected results.", Warning)
+                    if (
+                        isinstance(shapes[shape_id], pydiffvg.Path)
+                        and not shapes[shape_id].is_closed
+                    ):
+                        warnings.warn("Detected non-closed paths with fill color. This might causes unexpected results.", Warning)
 
             # Stroke color
             if shape_group.stroke_color is None:

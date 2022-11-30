@@ -15,9 +15,7 @@ def compute_sine_theta(s1, s2):  #s1 and s2 aret two segments to be uswed
     #s1, s2 (2, 2)
     v1 = s1[1,:] - s1[0, :]
     v2 = s2[1,:] - s2[0, :]
-    #print(v1, v2)
-    sine_theta = ( v1[0] * v2[1] - v1[1] * v2[0] ) / (torch.norm(v1) * torch.norm(v2))
-    return sine_theta
+    return ( v1[0] * v2[1] - v1[1] * v2[0] ) / (torch.norm(v1) * torch.norm(v2))
 
 def xing_loss(x_list, scale=1e-3):  # x[ npoints,2]
     loss = 0.

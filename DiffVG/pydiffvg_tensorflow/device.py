@@ -14,7 +14,11 @@ def get_device_name():
     global use_gpu
     global cpu_device_id
     global gpu_device_id
-    return '/device:gpu:' + str(gpu_device_id) if use_gpu else '/device:cpu:' + str(cpu_device_id)
+    return (
+        f'/device:gpu:{str(gpu_device_id)}'
+        if use_gpu
+        else f'/device:cpu:{str(cpu_device_id)}'
+    )
 
 def set_use_gpu(v: bool):
     """

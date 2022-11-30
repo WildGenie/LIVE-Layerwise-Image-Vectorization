@@ -49,7 +49,7 @@ def get_bezier_circle(radius=1, segments=4, bias=None):
     if bias is None:
         bias = (random.random(), random.random())
     avg_degree = 360 / (segments*3)
-    for i in range(0, segments*3):
+    for i in range(segments*3):
         point = (np.cos(np.deg2rad(i * avg_degree)),
                     np.sin(np.deg2rad(i * avg_degree)))
         points.append(point)
@@ -59,33 +59,32 @@ def get_bezier_circle(radius=1, segments=4, bias=None):
     return points
 
 def get_sdf(phi, method='skfmm', **kwargs):
-    if method == 'skfmm':
-        import skfmm
-        phi = (phi-0.5)*2
-        if (phi.max() <= 0) or (phi.min() >= 0):
-            return np.zeros(phi.shape).astype(np.float32)
-        sd = skfmm.distance(phi, dx=1)
+    if method != 'skfmm':
+        return
+    import skfmm
+    phi = (phi-0.5)*2
+    if (phi.max() <= 0) or (phi.min() >= 0):
+        return np.zeros(phi.shape).astype(np.float32)
+    sd = skfmm.distance(phi, dx=1)
 
-        flip_negative = kwargs.get('flip_negative', True)
+    flip_negative = kwargs.get('flip_negative', True)
+    if flip_negative:
+        sd = np.abs(sd)
+
+    truncate = kwargs.get('truncate', 10)
+    sd = np.clip(sd, -truncate, truncate)
+    if zero2max := kwargs.get('zero2max', True):
         if flip_negative:
-            sd = np.abs(sd)
-
-        truncate = kwargs.get('truncate', 10)
-        sd = np.clip(sd, -truncate, truncate)
-        # print(f"max sd value is: {sd.max()}")
-
-        zero2max = kwargs.get('zero2max', True)
-        if zero2max and flip_negative:
             sd = sd.max() - sd
-        elif zero2max:
+        else:
             raise ValueError
 
-        normalize = kwargs.get('normalize', 'sum')
-        if normalize == 'sum':
-            sd /= sd.sum()
-        elif normalize == 'to1':
-            sd /= sd.max()
-        return sd
+    normalize = kwargs.get('normalize', 'sum')
+    if normalize == 'sum':
+        sd /= sd.sum()
+    elif normalize == 'to1':
+        sd /= sd.max()
+    return sd
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -139,13 +138,13 @@ def ycrcb_conversion(im, format='[bs x 3 x 2D]', reverse=False):
     if reverse:
         mat = mat.inverse()
 
-    if format == '[bs x 3 x 2D]':
+    if format == '[2D x 3]':
+        im = torch.matmul(im, mat.T)
+        return im
+    elif format == '[bs x 3 x 2D]':
         im = im.permute(0, 2, 3, 1)
         im = torch.matmul(im, mat.T)
         im = im.permute(0, 3, 1, 2).contiguous()
-        return im
-    elif format == '[2D x 3]':
-        im = torch.matmul(im, mat.T)
         return im
     else:
         raise ValueError
@@ -252,10 +251,9 @@ def init_shapes(num_paths,
         num_control_points = [2] * num_segments
 
         if seginit_cfg.type=="random":
-            points = []
             p0 = pos_init_method()
             color_ref = copy.deepcopy(p0)
-            points.append(p0)
+            points = [p0]
             for j in range(num_segments):
                 radius = seginit_cfg.radius
                 p1 = (p0[0] + radius * npr.uniform(-0.5, 0.5),
@@ -264,14 +262,12 @@ def init_shapes(num_paths,
                       p1[1] + radius * npr.uniform(-0.5, 0.5))
                 p3 = (p2[0] + radius * npr.uniform(-0.5, 0.5),
                       p2[1] + radius * npr.uniform(-0.5, 0.5))
-                points.append(p1)
-                points.append(p2)
+                points.extend((p1, p2))
                 if j < num_segments - 1:
                     points.append(p3)
                     p0 = p3
             points = torch.FloatTensor(points)
 
-        # circle points initialization
         elif seginit_cfg.type=="circle":
             radius = seginit_cfg.radius
             if radius is None:
@@ -295,11 +291,9 @@ def init_shapes(num_paths,
             href = max(0, min(int(href), h-1))
             fill_color_init = list(gt[0, :, href, wref]) + [1.]
             fill_color_init = torch.FloatTensor(fill_color_init)
-            stroke_color_init = torch.FloatTensor(npr.uniform(size=[4]))
         else:
             fill_color_init = torch.FloatTensor(npr.uniform(size=[4]))
-            stroke_color_init = torch.FloatTensor(npr.uniform(size=[4]))
-
+        stroke_color_init = torch.FloatTensor(npr.uniform(size=[4]))
         path_group = pydiffvg.ShapeGroup(
             shape_ids = torch.LongTensor([shape_cnt+i]),
             fill_color = fill_color_init,
@@ -317,18 +311,17 @@ def init_shapes(num_paths,
         group.fill_color.requires_grad = True
         color_var.append(group.fill_color)
 
-    if trainable_stroke:
-        stroke_width_var = []
-        stroke_color_var = []
-        for path in shapes:
-            path.stroke_width.requires_grad = True
-            stroke_width_var.append(path.stroke_width)
-        for group in shape_groups:
-            group.stroke_color.requires_grad = True
-            stroke_color_var.append(group.stroke_color)
-        return shapes, shape_groups, point_var, color_var, stroke_width_var, stroke_color_var
-    else:
+    if not trainable_stroke:
         return shapes, shape_groups, point_var, color_var
+    stroke_width_var = []
+    stroke_color_var = []
+    for path in shapes:
+        path.stroke_width.requires_grad = True
+        stroke_width_var.append(path.stroke_width)
+    for group in shape_groups:
+        group.stroke_color.requires_grad = True
+        stroke_color_var.append(group.stroke_color)
+    return shapes, shape_groups, point_var, color_var, stroke_width_var, stroke_color_var
 
 class linear_decay_lrlambda_f(object):
     def __init__(self, decay_every, decay_ratio):
@@ -341,8 +334,7 @@ class linear_decay_lrlambda_f(object):
         lr_s = self.decay_ratio**decay_time
         lr_e = self.decay_ratio**(decay_time+1)
         r = decay_step/self.decay_every
-        lr = lr_s * (1-r) + lr_e * r
-        return lr
+        return lr_s * (1-r) + lr_e * r
 
 
 if __name__ == "__main__":

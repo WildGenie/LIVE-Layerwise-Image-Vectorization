@@ -9,14 +9,7 @@ def get_experiment_id(debug=False):
     return int(time.time()*100)
 
 def get_path_schedule(type, **kwargs):
-    if type == 'repeat':
-        max_path = kwargs['max_path']
-        schedule_each = kwargs['schedule_each']
-        return [schedule_each] * max_path
-    elif type == 'list':
-        schedule = kwargs['schedule']
-        return schedule
-    elif type == 'exp':
+    if type == 'exp':
         import math
         base = kwargs['base']
         max_path = kwargs['max_path']
@@ -31,26 +24,22 @@ def get_path_schedule(type, **kwargs):
             cnt += 1
             schedule += [proposed_step]
         return schedule
+    elif type == 'list':
+        return kwargs['schedule']
+    elif type == 'repeat':
+        return [kwargs['schedule_each']] * kwargs['max_path']
     else:
         raise ValueError
 
 def edict_2_dict(x):
     if isinstance(x, dict):
-        xnew = {}
-        for k in x:
-            xnew[k] = edict_2_dict(x[k])
-        return xnew
+        return {k: edict_2_dict(x[k]) for k in x}
     elif isinstance(x, list):
-        xnew = []
-        for i in range(len(x)):
-            xnew.append( edict_2_dict(x[i]) )
-        return xnew
+        return [edict_2_dict(x[i]) for i in range(len(x))]
     else:
         return x
 
 def check_and_create_dir(path):
     pathdir = osp.split(path)[0]
-    if osp.isdir(pathdir):
-        pass
-    else:
+    if not osp.isdir(pathdir):
         os.makedirs(pathdir)

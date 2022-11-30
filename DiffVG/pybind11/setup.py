@@ -38,10 +38,7 @@ package_data = [
 
 # Prevent installation of pybind11 headers by setting
 # PYBIND11_USE_CMAKE.
-if os.environ.get('PYBIND11_USE_CMAKE'):
-    headers = []
-else:
-    headers = package_data
+headers = [] if os.environ.get('PYBIND11_USE_CMAKE') else package_data
 
 
 class InstallHeaders(install_headers):
@@ -83,7 +80,7 @@ setup(
     author='Wenzel Jakob',
     author_email='wenzel.jakob@epfl.ch',
     url='https://github.com/pybind/pybind11',
-    download_url='https://github.com/pybind/pybind11/tarball/v' + __version__,
+    download_url=f'https://github.com/pybind/pybind11/tarball/v{__version__}',
     packages=['pybind11'],
     license='BSD',
     headers=headers,
@@ -102,7 +99,7 @@ setup(
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
-        'License :: OSI Approved :: BSD License'
+        'License :: OSI Approved :: BSD License',
     ],
     keywords='C++11, Python bindings',
     long_description="""pybind11 is a lightweight header-only library that
@@ -127,4 +124,5 @@ Python (2.7 or 3.x, or PyPy2.7 >= 5.7) and the C++ standard library. This
 compact implementation was possible thanks to some of the new C++11 language
 features (specifically: tuples, lambda functions and variadic templates). Since
 its creation, this library has grown beyond Boost.Python in many ways, leading
-to dramatically simpler binding code in many common situations.""")
+to dramatically simpler binding code in many common situations.""",
+)

@@ -114,8 +114,9 @@ def test_bytes(doc):
     assert m.bytes_from_string().decode() == "foo"
     assert m.bytes_from_str().decode() == "bar"
 
-    assert doc(m.bytes_from_str) == "bytes_from_str() -> {}".format(
-        "str" if env.PY2 else "bytes"
+    assert (
+        doc(m.bytes_from_str)
+        == f'bytes_from_str() -> {"str" if env.PY2 else "bytes"}'
     )
 
 
@@ -251,7 +252,7 @@ def test_pybind11_str_raw_str():
     assert cvt({}) == u"{}"
     assert cvt({3: 4}) == u"{3: 4}"
     assert cvt(set()) == u"set([])" if env.PY2 else "set()"
-    assert cvt({3, 3}) == u"set([3])" if env.PY2 else "{3}"
+    assert cvt({3}) == u"set([3])" if env.PY2 else "{3}"
 
     valid_orig = u"Ǳ"
     valid_utf8 = valid_orig.encode("utf-8")
@@ -341,7 +342,7 @@ def test_memoryview(method, args, fmt, expected_view):
         view_as_list = list(view)
     else:
         # Using max to pick non-zero byte (big-endian vs little-endian).
-        view_as_list = [max([ord(c) for c in s]) for s in view]
+        view_as_list = [max(ord(c) for c in s) for s in view]
     assert view_as_list == list(expected_view)
 
 

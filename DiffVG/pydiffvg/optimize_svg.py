@@ -122,7 +122,7 @@ class OptimizableSvg:
 
         @staticmethod
         def parse_rotate(vals):
-            assert (len(vals) == 1 or len(vals) == 3)
+            assert len(vals) in {1, 3}
             mat = np.eye(3)
             rads=math.radians(vals[0])
             sint=math.sin(rads)
@@ -182,9 +182,11 @@ class OptimizableSvg:
 
             Translate=np.eye(3)
             Translate[0:2,2]=TXY
-            
-            M=OptimizableSvg.TransformTools.promote_numpy(Rot @ Scale @ Shear) @ Translate
-            return M
+
+            return (
+                OptimizableSvg.TransformTools.promote_numpy(Rot @ Scale @ Shear)
+                @ Translate
+            )
 
         @staticmethod
         def promote(m):
@@ -196,18 +198,15 @@ class OptimizableSvg:
         def make_rot(Theta):
             sint=Theta.sin().squeeze()
             cost=Theta.cos().squeeze()
-            #m=torch.tensor([[cost, -sint],[sint, cost]])
-            Rot=torch.stack((torch.stack((cost,-sint)),torch.stack((sint,cost))))
-            return Rot
+            return torch.stack((torch.stack((cost,-sint)),torch.stack((sint,cost))))
 
         @staticmethod
         def make_scale(ScaleXY):
-            if ScaleXY.squeeze().dim()==0:
-                ScaleXY=ScaleXY.squeeze()
-                #uniform scale
-                return torch.diag(torch.stack([ScaleXY,ScaleXY])).to(ScaleXY.device)
-            else:
+            if ScaleXY.squeeze().dim() != 0:
                 return torch.diag(ScaleXY).to(ScaleXY.device)
+            ScaleXY=ScaleXY.squeeze()
+            #uniform scale
+            return torch.diag(torch.stack([ScaleXY,ScaleXY])).to(ScaleXY.device)
 
         @staticmethod
         def make_shear(ShearX):
@@ -261,8 +260,7 @@ class OptimizableSvg:
 
         @staticmethod
         def tf_to_string(M):
-            tfstring = "matrix({} {} {} {} {} {})".format(M[0, 0], M[1, 0], M[0, 1], M[1, 1], M[0, 2], M[1, 2])
-            return tfstring
+            return f"matrix({M[0, 0]} {M[1, 0]} {M[0, 1]} {M[1, 1]} {M[0, 2]} {M[1, 2]})"
 
         @staticmethod
         def decomp_to_string(decomp):
@@ -270,16 +268,16 @@ class OptimizableSvg:
             ret=""
             props=OptimizableSvg.TransformTools.analyze_transform(decomp)
             if props.has_rotation:
-                ret+="rotate({}) ".format(math.degrees(decomp.theta.item()))
+                ret += f"rotate({math.degrees(decomp.theta.item())}) "
             if props.has_scale:
                 if decomp.scale.dim()==0:
-                    ret += "scale({}) ".format(decomp.scale.item())
+                    ret += f"scale({decomp.scale.item()}) "
                 else:
-                    ret+="scale({} {}) ".format(decomp.scale[0], decomp.scale[1])
+                    ret += f"scale({decomp.scale[0]} {decomp.scale[1]}) "
             if props.has_shear:
-                ret+="skewX({}) ".format(decomp.shear.item())
+                ret += f"skewX({decomp.shear.item()}) "
             if props.has_translation:
-                ret+="translate({} {}) ".format(decomp.translate[0],decomp.translate[1])
+                ret += f"translate({decomp.translate[0]} {decomp.translate[1]}) "
 
             return ret
 
@@ -304,7 +302,7 @@ class OptimizableSvg:
             r2 = np.dot(ref2, r)
 
             Ref = np.dot(ref, ref2)
-            
+
             sc = np.diag(r2)
             Scale = np.diagflat(sc)
 
@@ -451,28 +449,29 @@ class OptimizableSvg:
                     self.shear = torch.tensor(decomp.shear, dtype=torch.float32, requires_grad=True,device=transform.device)
                     optimvars += [{'params':x,'lr':lr} for x in [self.Theta, self.scale, self.shear]]+[{'params':self.translation,'lr':lr*tmult}]
                 else:
-                    raise ValueError("Unrecognized transform mode '{}'".format(self.transform_mode))
+                    raise ValueError(f"Unrecognized transform mode '{self.transform_mode}'")
                 self.optimizer=SvgOptimizationSettings.optims[optim_params["optimizer"]](optimvars)
 
         def get_transform(self):
             if not self.optimizes:
                 return self.transform
+            if self.transform_mode == "move":
+                composed=OptimizableSvg.TransformTools.recompose(self.Theta,torch.tensor([1.],device=self.Theta.device),torch.tensor(0.,device=self.Theta.device),self.translation)
+                return self.residual.mm(composed) if self.residual is not None else composed
+            elif self.transform_mode == "rigid":
+                composed = OptimizableSvg.TransformTools.recompose(self.Theta, self.scale, torch.tensor(0.,device=self.Theta.device),
+                                                                   self.translation)
+                return self.residual.mm(composed) if self.residual is not None else composed
+            elif self.transform_mode == "similarity":
+                composed=OptimizableSvg.TransformTools.recompose(self.Theta, torch.cat((self.scale,self.scale*self.scale_sign)),torch.tensor(0.,device=self.Theta.device),self.translation)
+                return self.residual.mm(composed) if self.residual is not None else composed
+            elif self.transform_mode == "affine":
+                return OptimizableSvg.TransformTools.recompose(
+                    self.Theta, self.scale, self.shear, self.translation
+                )
+
             else:
-                if self.transform_mode == "move":
-                    composed=OptimizableSvg.TransformTools.recompose(self.Theta,torch.tensor([1.],device=self.Theta.device),torch.tensor(0.,device=self.Theta.device),self.translation)
-                    return self.residual.mm(composed) if self.residual is not None else composed
-                elif self.transform_mode == "rigid":
-                    composed = OptimizableSvg.TransformTools.recompose(self.Theta, self.scale, torch.tensor(0.,device=self.Theta.device),
-                                                                       self.translation)
-                    return self.residual.mm(composed) if self.residual is not None else composed
-                elif self.transform_mode == "similarity":
-                    composed=OptimizableSvg.TransformTools.recompose(self.Theta, torch.cat((self.scale,self.scale*self.scale_sign)),torch.tensor(0.,device=self.Theta.device),self.translation)
-                    return self.residual.mm(composed) if self.residual is not None else composed
-                elif self.transform_mode == "affine":
-                    composed = OptimizableSvg.TransformTools.recompose(self.Theta, self.scale, self.shear, self.translation)
-                    return composed
-                else:
-                    raise ValueError("Unrecognized transform mode '{}'".format(self.transform_mode))
+                raise ValueError(f"Unrecognized transform mode '{self.transform_mode}'")
 
         def tfToString(self):
             if self.transform is None:
@@ -525,16 +524,16 @@ class OptimizableSvg:
                 if key in ["fill", "stroke"]:
                     #a paint-type value
                     if value[0] == "none":
-                        appstring+="{}:none;".format(key)
+                        appstring += f"{key}:none;"
                     elif value[0] == "solid":
-                        appstring += "{}:{};".format(key,OptimizableSvg.rgb_to_string(value[1]))
+                        appstring += f"{key}:{OptimizableSvg.rgb_to_string(value[1])};"
                     elif value[0] == "url":
-                        appstring += "{}:url(#{});".format(key,value[1].id)
-                        #appstring += "{}:{};".format(key,"#ff00ff")
+                        appstring += f"{key}:url(#{value[1].id});"
+                                    #appstring += "{}:{};".format(key,"#ff00ff")
                 elif key in ["opacity", "fill-opacity", "stroke-opacity", "stroke-width", "fill-rule"]:
-                    appstring+="{}:{};".format(key,value)
+                    appstring += f"{key}:{value};"
                 else:
-                    raise ValueError("Don't know how to write appearance parameter '{}'".format(key))
+                    raise ValueError(f"Don't know how to write appearance parameter '{key}'")
             return appstring
 
 
@@ -550,19 +549,17 @@ class OptimizableSvg:
         def proc_appearance(self,appearance,optim_params):
             self.appearance=appearance
             for key, value in appearance.items():
-                if key == "fill" or key == "stroke":
+                if key in ["fill", "stroke"]:
                     if optim_params["optimize_color"] and value[0]=="solid":
                         value[1].requires_grad_(True)
                         self.optimizers.append(OptimizableSvg.ColorOptimizer(value[1],SvgOptimizationSettings.optims[optim_params["optimizer"]],optim_params["color_lr"]))
-                elif key == "fill-opacity" or key == "stroke-opacity" or key == "opacity":
+                elif key in ["fill-opacity", "stroke-opacity", "opacity"]:
                     if optim_params["optimize_alpha"]:
                         value[1].requires_grad_(True)
                         self.optimizers.append(OptimizableSvg.ColorOptimizer(value[1], optim_params["optimizer"],
                                                                              optim_params["alpha_lr"]))
-                elif key == "fill-rule" or key == "stroke-width":
-                    pass
-                else:
-                    raise RuntimeError("Unrecognized appearance key '{}'".format(key))
+                elif key not in ["fill-rule", "stroke-width"]:
+                    raise RuntimeError(f"Unrecognized appearance key '{key}'")
 
         def prop_transform(self,intform):
             return intform.matmul(self.transform_optim.get_transform()) if self.transform is not None else intform
@@ -592,7 +589,7 @@ class OptimizableSvg:
                     # gets replaced
                     outappearance[key] = value
                 else:
-                    raise RuntimeError("Unrecognized appearance key '{}'".format(key))
+                    raise RuntimeError(f"Unrecognized appearance key '{key}'")
             return outappearance
 
         def zero_grad(self):
@@ -667,14 +664,15 @@ class OptimizableSvg:
 
         @staticmethod
         def get_default_appearance(device):
-            default_appearance = {"fill": ("solid", torch.tensor([0., 0., 0.],device=device)),
-                                  "fill-opacity": torch.tensor([1.],device=device),
-                                  "fill-rule": "nonzero",
-                                  "opacity": torch.tensor([1.],device=device),
-                                  "stroke": ("none", None),
-                                  "stroke-opacity": torch.tensor([1.],device=device),
-                                  "stroke-width": torch.tensor([0.],device=device)}
-            return default_appearance
+            return {
+                "fill": ("solid", torch.tensor([0.0, 0.0, 0.0], device=device)),
+                "fill-opacity": torch.tensor([1.0], device=device),
+                "fill-rule": "nonzero",
+                "opacity": torch.tensor([1.0], device=device),
+                "stroke": ("none", None),
+                "stroke-opacity": torch.tensor([1.0], device=device),
+                "stroke-width": torch.tensor([0.0], device=device),
+            }
 
         @staticmethod
         def get_default_transform():
@@ -701,18 +699,19 @@ class OptimizableSvg:
                 #get the gradient object from this node
                 return value[1].getGrad(combined_opacity,transform)
             else:
-                raise ValueError("Unknown paint value type '{}'".format(value[0]))
+                raise ValueError(f"Unknown paint value type '{value[0]}'")
 
         def make_shape_group(self,appearance,transform,num_shapes,num_subobjects):
             fill=self.construct_paint(appearance["fill"],appearance["opacity"]*appearance["fill-opacity"],transform)
             stroke=self.construct_paint(appearance["stroke"],appearance["opacity"]*appearance["stroke-opacity"],transform)
-            sg = pydiffvg.ShapeGroup(shape_ids=torch.tensor(range(num_shapes, num_shapes + num_subobjects)),
-                                     fill_color=fill,
-                                     use_even_odd_rule=appearance["fill-rule"]=="evenodd",
-                                     stroke_color=stroke,
-                                     shape_to_canvas=transform,
-                                     id=self.id)
-            return sg
+            return pydiffvg.ShapeGroup(
+                shape_ids=torch.tensor(range(num_shapes, num_shapes + num_subobjects)),
+                fill_color=fill,
+                use_even_odd_rule=appearance["fill-rule"] == "evenodd",
+                stroke_color=stroke,
+                shape_to_canvas=transform,
+                id=self.id,
+            )
 
     class PathNode(ShapeNode):
         def __init__(self, id, transform, appearance,settings, paths):
@@ -722,9 +721,7 @@ class OptimizableSvg:
         def proc_paths(self,paths,optim_params):
             self.paths=paths
             if optim_params["paths"]["optimize_points"]:
-                ptlist=[]
-                for path in paths:
-                    ptlist.append(path.points.requires_grad_(True))
+                ptlist = [path.points.requires_grad_(True) for path in paths]
                 self.optimizers.append(SvgOptimizationSettings.optims[optim_params["optimizer"]](ptlist,lr=optim_params["paths"]["shape_lr"]))
 
         def get_type(self):
@@ -740,7 +737,7 @@ class OptimizableSvg:
             shape_groups.append(sg)
 
         def path_to_string(self,path):
-            path_string = "M {},{} ".format(path.points[0][0].item(), path.points[0][1].item())
+            path_string = f"M {path.points[0][0].item()},{path.points[0][1].item()} "
             idx = 1
             numpoints = path.points.shape[0]
             for type in path.num_control_points:
@@ -755,8 +752,8 @@ class OptimizableSvg:
                     # add cubic
                     path_string += "C "
                 while toproc > 0:
-                    path_string += "{},{} ".format(path.points[idx % numpoints][0].item(),
-                                                   path.points[idx % numpoints][1].item())
+                    path_string += f"{path.points[idx % numpoints][0].item()},{path.points[idx % numpoints][1].item()} "
+
                     idx += 1
                     toproc -= 1
             if path.is_closed:
@@ -765,10 +762,7 @@ class OptimizableSvg:
             return path_string
 
         def paths_string(self):
-            pstr=""
-            for path in self.paths:
-                pstr+=self.path_to_string(path)
-            return pstr
+            return "".join(self.path_to_string(path) for path in self.paths)
 
         def write_xml(self, parent):
             elm = etree.SubElement(parent, "path")
@@ -794,7 +788,15 @@ class OptimizableSvg:
             applytf=self.prop_transform(transform)
             applyapp = self.prop_appearance(appearance)
             sg=self.make_shape_group(applyapp,applytf,len(shapes),1)
-            shapes.append(pydiffvg.Rect(self.rect[0:2],self.rect[0:2]+self.rect[2:4],applyapp["stroke-width"],self.id))
+            shapes.append(
+                pydiffvg.Rect(
+                    self.rect[:2],
+                    self.rect[:2] + self.rect[2:4],
+                    applyapp["stroke-width"],
+                    self.id,
+                )
+            )
+
             shape_groups.append(sg)
 
         def write_xml(self, parent):
@@ -824,7 +826,12 @@ class OptimizableSvg:
             applytf=self.prop_transform(transform)
             applyapp = self.prop_appearance(appearance)
             sg=self.make_shape_group(applyapp,applytf,len(shapes),1)
-            shapes.append(pydiffvg.Circle(self.circle[2],self.circle[0:2],applyapp["stroke-width"],self.id))
+            shapes.append(
+                pydiffvg.Circle(
+                    self.circle[2], self.circle[:2], applyapp["stroke-width"], self.id
+                )
+            )
+
             shape_groups.append(sg)
 
         def write_xml(self, parent):
@@ -854,7 +861,15 @@ class OptimizableSvg:
             applytf=self.prop_transform(transform)
             applyapp = self.prop_appearance(appearance)
             sg=self.make_shape_group(applyapp,applytf,len(shapes),1)
-            shapes.append(pydiffvg.Ellipse(self.ellipse[2:4],self.ellipse[0:2],applyapp["stroke-width"],self.id))
+            shapes.append(
+                pydiffvg.Ellipse(
+                    self.ellipse[2:4],
+                    self.ellipse[:2],
+                    applyapp["stroke-width"],
+                    self.id,
+                )
+            )
+
             shape_groups.append(sg)
 
         def write_xml(self, parent):
@@ -892,7 +907,7 @@ class OptimizableSvg:
             for i in range(self.points.shape[0]):
                 pt=self.points[i,:]
                 #assert pt.shape == (1,2)
-                ret+= str(pt[0])+","+str(pt[1])+" "
+                ret += f"{str(pt[0])},{str(pt[1])} "
             return ret
 
         def write_xml(self, parent):
@@ -938,7 +953,7 @@ class OptimizableSvg:
                     stop.set("stop-color",OptimizableSvg.rgb_to_string(stops[idx,0:3]))
                     stop.set("stop-opacity",str(stops[idx,3].item()))
             else:
-                elm.set('xlink:href', "#{}".format(self.href.id))
+                elm.set('xlink:href', f"#{self.href.id}")
 
             if begin is not None and end is not None:
                 #no stops
@@ -954,11 +969,7 @@ class OptimizableSvg:
                 child.write_xml(elm)
 
         def getGrad(self,combined_opacity,transform):
-            if self.is_ref():
-                offsets, stops=self.href.get_stops()
-            else:
-                offsets, stops=self.get_stops()
-
+            offsets, stops = self.href.get_stops() if self.is_ref() else self.get_stops()
             stops=stops.clone()
             stops[:,3]*=combined_opacity
 
@@ -1023,14 +1034,15 @@ class OptimizableSvg:
         scene_args = pydiffvg.RenderFunction.serialize_scene(*scene)
         render = pydiffvg.RenderFunction.apply
         out_size=(scene[0],scene[1]) if scale is None else (int(scene[0]*scale),int(scene[1]*scale))
-        img = render(out_size[0],  # width
-                     out_size[1],  # height
-                     2,  # num_samples_x
-                     2,  # num_samples_y
-                     seed,  # seed
-                     None, # background_image
-                     *scene_args)
-        return img
+        return render(
+            out_size[0],  # width
+            out_size[1],  # height
+            2,  # num_samples_x
+            2,  # num_samples_y
+            seed,  # seed
+            None,  # background_image
+            *scene_args
+        )
 
     def step(self):
         self.dirty=True
@@ -1048,17 +1060,45 @@ class OptimizableSvg:
         return ("\t"*self.depth)+s
 
     def reportSkippedAttribs(self, node, non_skipped=[]):
-        skipped=set([k for k in node.attrib.keys() if not OptimizableSvg.is_namespace(k)])-set(non_skipped)
+        skipped = {
+            k for k in node.attrib.keys() if not OptimizableSvg.is_namespace(k)
+        } - set(non_skipped)
+
         if len(skipped)>0:
-            tag=OptimizableSvg.remove_namespace(node.tag) if "id" not in node.attrib else "{}#{}".format(OptimizableSvg.remove_namespace(node.tag),node.attrib["id"])
-            print(self.offset_str("Warning: Skipping the following attributes of node '{}': {}".format(tag,", ".join(["'{}'".format(atr) for atr in skipped]))))
+            tag = (
+                OptimizableSvg.remove_namespace(node.tag)
+                if "id" not in node.attrib
+                else f'{OptimizableSvg.remove_namespace(node.tag)}#{node.attrib["id"]}'
+            )
+
+            print(
+                self.offset_str(
+                    "Warning: Skipping the following attributes of node '{}': {}".format(
+                        tag, ", ".join([f"'{atr}'" for atr in skipped])
+                    )
+                )
+            )
 
     def reportSkippedChildren(self,node,skipped):
-        skipped_names=["{}#{}".format(elm.tag,elm.attrib["id"]) if "id" in elm.attrib else elm.tag for elm in skipped]
+        skipped_names = [
+            f'{elm.tag}#{elm.attrib["id"]}' if "id" in elm.attrib else elm.tag
+            for elm in skipped
+        ]
+
         if len(skipped)>0:
-            tag = OptimizableSvg.remove_namespace(node.tag) if "id" not in node.attrib else "{}#{}".format(OptimizableSvg.remove_namespace(node.tag),
-                                                                                            node.attrib["id"])
-            print(self.offset_str("Warning: Skipping the following children of node '{}': {}".format(tag,", ".join(["'{}'".format(name) for name in skipped_names]))))
+            tag = (
+                OptimizableSvg.remove_namespace(node.tag)
+                if "id" not in node.attrib
+                else f'{OptimizableSvg.remove_namespace(node.tag)}#{node.attrib["id"]}'
+            )
+
+            print(
+                self.offset_str(
+                    "Warning: Skipping the following children of node '{}': {}".format(
+                        tag, ", ".join([f"'{name}'" for name in skipped_names])
+                    )
+                )
+            )
 
     #endregion
 
@@ -1098,7 +1138,7 @@ class OptimizableSvg:
             elif type == "skewY":
                 mat = mat @ OptimizableSvg.TransformTools.parse_skewy(args)
             else:
-                raise ValueError("Unknown transform type '{}'".format(type))
+                raise ValueError(f"Unknown transform type '{type}'")
         return mat
 
     #dictionary that defines what constant do we need to multiply different units to get the value in pixels
@@ -1125,7 +1165,10 @@ class OptimizableSvg:
             except ValueError:
                 continue
         if len(unit)>0 and unit not in OptimizableSvg.unit_dict:
-            raise ValueError("Unknown or unsupported unit '{}' encountered while parsing".format(unit))
+            raise ValueError(
+                f"Unknown or unsupported unit '{unit}' encountered while parsing"
+            )
+
         if unit != "":
             val*=OptimizableSvg.unit_dict[unit]
         return val
@@ -1136,7 +1179,7 @@ class OptimizableSvg:
         s=s.rstrip("%")
         val=float(s)
         if is_percent:
-            val=val/100
+            val /= 100
         return np.clip(val,0.,1.)
 
     @staticmethod
@@ -1145,7 +1188,7 @@ class OptimizableSvg:
             Hex to tuple
         """
         if s[0] != '#':
-            raise ValueError("Color argument `{}` not supported".format(s))
+            raise ValueError(f"Color argument `{s}` not supported")
         s = s.lstrip('#')
         if len(s)==6:
             rgb = tuple(int(s[i:i + 2], 16) for i in (0, 2, 4))
@@ -1154,7 +1197,7 @@ class OptimizableSvg:
             rgb = tuple((int(s[i:i + 1], 16)) for i in (0, 1, 2))
             return torch.tensor([rgb[0] / 15.0, rgb[1] / 15.0, rgb[2] / 15.0])
         else:
-            raise ValueError("Color argument `{}` not supported".format(s))
+            raise ValueError(f"Color argument `{s}` not supported")
         # sRGB to RGB
         # return torch.pow(torch.tensor([rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0]), 2.2)
 
@@ -1163,8 +1206,7 @@ class OptimizableSvg:
     def rgb_to_string(val):
         byte_rgb=(val.clone().detach()*255).type(torch.int)
         byte_rgb.clamp_(min=0,max=255)
-        s="#{:02x}{:02x}{:02x}".format(*byte_rgb)
-        return s
+        return "#{:02x}{:02x}{:02x}".format(*byte_rgb)
 
     #parses a "paint" string for use in fill and stroke definitions
     @staticmethod
@@ -1177,10 +1219,13 @@ class OptimizableSvg:
         elif paintStr.startswith("url"):
             url=paintStr.lstrip("url(").rstrip(")").strip("\'\"").lstrip("#")
             if url not in defs:
-                raise ValueError("Paint-type attribute referencing an unknown object with ID '#{}'".format(url))
+                raise ValueError(
+                    f"Paint-type attribute referencing an unknown object with ID '#{url}'"
+                )
+
             return ("url",defs[url])
         else:
-            raise ValueError("Unrecognized paint string: '{}'".format(paintStr))
+            raise ValueError(f"Unrecognized paint string: '{paintStr}'")
 
     appearance_keys=["fill","fill-opacity","fill-rule","opacity","stroke","stroke-opacity","stroke-width"]
 
@@ -1191,19 +1236,16 @@ class OptimizableSvg:
         local_dict={key:value for key,value in node.attrib.items() if key in parse_keys}
         css_dict={}
         style_dict={}
-        appearance_dict={}
         if "class" in node.attrib:
             cls=node.attrib["class"]
-            if "."+cls in defs:
-                css_string=defs["."+cls]
+            if f".{cls}" in defs:
+                css_string = defs[f".{cls}"]
                 css_dict={item.split(":")[0]:item.split(":")[1] for item in css_string.split(";") if len(item)>0 and item.split(":")[0] in parse_keys}
         if "style" in node.attrib:
             style_string=node.attrib["style"]
             style_dict={item.split(":")[0]:item.split(":")[1] for item in style_string.split(";") if len(item)>0 and item.split(":")[0] in parse_keys}
-        appearance_dict.update(css_dict)
-        appearance_dict.update(style_dict)
-        appearance_dict.update(local_dict)
-        for key,value in appearance_dict.items():
+        appearance_dict = css_dict | style_dict | local_dict
+        for key, value in appearance_dict.items():
             if key=="fill":
                 ret[key]=OptimizableSvg.parsePaint(value,defs,device)
             elif key == "fill-opacity":
@@ -1219,7 +1261,10 @@ class OptimizableSvg:
             elif key == "stroke-width":
                 ret[key]=torch.tensor(OptimizableSvg.parseLength(value),device=device)
             else:
-                raise ValueError("Error while parsing appearance attributes: key '{}' should not be here".format(key))
+                raise ValueError(
+                    f"Error while parsing appearance attributes: key '{key}' should not be here"
+                )
+
 
         return ret
 
@@ -1239,7 +1284,12 @@ class OptimizableSvg:
 
         version=root.attrib["version"] if "version" in root.attrib else "<unknown version>"
         if version != "2.0":
-            print(self.offset_str("Warning: Version {} is not 2.0, strange things may happen".format(version)))
+            print(
+                self.offset_str(
+                    f"Warning: Version {version} is not 2.0, strange things may happen"
+                )
+            )
+
 
         self.root=OptimizableSvg.RootNode(id,transform,appearance,self.settings)
 
@@ -1268,7 +1318,12 @@ class OptimizableSvg:
     def parseShape(self,shape,parent):
         tag=OptimizableSvg.remove_namespace(shape.tag)
         if self.verbose:
-            print(self.offset_str("Parsing {}#{}".format(tag,shape.attrib["id"] if "id" in shape.attrib else "<No ID>")))
+            print(
+                self.offset_str(
+                    f'Parsing {tag}#{shape.attrib["id"] if "id" in shape.attrib else "<No ID>"}'
+                )
+            )
+
 
         self.depth+=1
         if tag == "path":
@@ -1282,21 +1337,19 @@ class OptimizableSvg:
         elif tag == "polygon":
             self.parsePolygon(shape,parent)
         else:
-            raise ValueError("Encountered unknown shape type '{}'".format(tag))
+            raise ValueError(f"Encountered unknown shape type '{tag}'")
         self.depth -= 1
 
     def parsePath(self,shape,parent):
         path_string=shape.attrib['d']
-        name = ''
-        if 'id' in shape.attrib:
-            name = shape.attrib['id']
+        name = shape.attrib['id'] if 'id' in shape.attrib else ''
         paths = pydiffvg.from_svg_path(path_string)
         for idx, path in enumerate(paths):
             path.stroke_width = torch.tensor([0.],device=self.device)
             path.num_control_points=path.num_control_points.to(self.device)
             path.points=path.points.to(self.device)
             path.source_id = name
-            path.id = "{}-{}".format(name,idx) if len(paths)>1 else name
+            path.id = f"{name}-{idx}" if len(paths)>1 else name
         transform = OptimizableSvg.parseTransform(shape)
         appearance = OptimizableSvg.parseAppearance(shape,self.defs,self.device)
         node=OptimizableSvg.PathNode(name,transform,appearance,self.settings,paths)
@@ -1311,9 +1364,7 @@ class OptimizableSvg:
         cy = float(shape.attrib["cy"]) if "cy" in shape.attrib else 0.
         rx = float(shape.attrib["rx"])
         ry = float(shape.attrib["ry"])
-        name = ''
-        if 'id' in shape.attrib:
-            name = shape.attrib['id']
+        name = shape.attrib['id'] if 'id' in shape.attrib else ''
         transform = OptimizableSvg.parseTransform(shape)
         appearance = OptimizableSvg.parseAppearance(shape, self.defs, self.device)
         node = OptimizableSvg.EllipseNode(name, transform, appearance, self.settings, (cx, cy, rx, ry))
@@ -1326,7 +1377,6 @@ class OptimizableSvg:
 
     def parsePolygon(self, shape, parent):
         points_string = shape.attrib['points']
-        name = ''
         points=[]
         for point_string in points_string.split(" "):
             if len(point_string) == 0:
@@ -1335,8 +1385,7 @@ class OptimizableSvg:
             assert len(coord_strings)==2
             points.append([float(coord_strings[0]),float(coord_strings[1])])
         points=torch.tensor(points,dtype=torch.float,device=self.device)
-        if 'id' in shape.attrib:
-            name = shape.attrib['id']
+        name = shape.attrib['id'] if 'id' in shape.attrib else ''
         transform = OptimizableSvg.parseTransform(shape)
         appearance = OptimizableSvg.parseAppearance(shape, self.defs, self.device)
         node = OptimizableSvg.PolygonNode(name, transform, appearance, self.settings, points)
@@ -1350,9 +1399,7 @@ class OptimizableSvg:
         cx = float(shape.attrib["cx"]) if "cx" in shape.attrib else 0.
         cy = float(shape.attrib["cy"]) if "cy" in shape.attrib else 0.
         r = float(shape.attrib["r"])
-        name = ''
-        if 'id' in shape.attrib:
-            name = shape.attrib['id']
+        name = shape.attrib['id'] if 'id' in shape.attrib else ''
         transform = OptimizableSvg.parseTransform(shape)
         appearance = OptimizableSvg.parseAppearance(shape, self.defs, self.device)
         node = OptimizableSvg.CircleNode(name, transform, appearance, self.settings, (cx, cy, r))
@@ -1368,9 +1415,7 @@ class OptimizableSvg:
         y =      float(shape.attrib["y"]) if "y" in shape.attrib else 0.
         width =  float(shape.attrib["width"])
         height = float(shape.attrib["height"])
-        name = ''
-        if 'id' in shape.attrib:
-            name = shape.attrib['id']
+        name = shape.attrib['id'] if 'id' in shape.attrib else ''
         transform = OptimizableSvg.parseTransform(shape)
         appearance = OptimizableSvg.parseAppearance(shape, self.defs, self.device)
         node = OptimizableSvg.RectNode(name, transform, appearance, self.settings, (x,y,width,height))
@@ -1384,7 +1429,7 @@ class OptimizableSvg:
         tag = OptimizableSvg.remove_namespace(group.tag)
         id = group.attrib["id"] if "id" in group.attrib else "<No ID>"
         if self.verbose:
-            print(self.offset_str("Parsing {}#{}".format(tag, id)))
+            print(self.offset_str(f"Parsing {tag}#{id}"))
 
         self.depth+=1
 
@@ -1420,10 +1465,13 @@ class OptimizableSvg:
         tag = OptimizableSvg.remove_namespace(style_node.tag)
         id = style_node.attrib["id"] if "id" in style_node.attrib else "<No ID>"
         if self.verbose:
-            print(self.offset_str("Parsing {}#{}".format(tag, id)))
+            print(self.offset_str(f"Parsing {tag}#{id}"))
 
         if style_node.attrib["type"] != "text/css":
-            raise ValueError("Only text/css style recognized, got {}".format(style_node.attrib["type"]))
+            raise ValueError(
+                f'Only text/css style recognized, got {style_node.attrib["type"]}'
+            )
+
 
         self.depth += 1
 
@@ -1434,20 +1482,22 @@ class OptimizableSvg:
             self.reportSkippedAttribs(def_node, ["id"])
 
         if len(style_node)>0:
-            raise ValueError("Style node should not have children (has {})".format(len(style_node)))
+            raise ValueError(
+                f"Style node should not have children (has {len(style_node)})"
+            )
+
 
         # collect CSS classes
         sheet = cssutils.parseString(style_node.text)
         for rule in sheet:
-            if hasattr(rule, 'selectorText') and hasattr(rule, 'style'):
-                name = rule.selectorText
-                if len(name) >= 2 and name[0] == '.':
-                    self.defs[name] = rule.style.getCssText().replace("\n","")
-                else:
-                    raise ValueError("Unrecognized CSS selector {}".format(name))
-            else:
+            if not hasattr(rule, 'selectorText') or not hasattr(rule, 'style'):
                 raise ValueError("No style or selector text in CSS rule")
 
+            name = rule.selectorText
+            if len(name) >= 2 and name[0] == '.':
+                self.defs[name] = rule.style.getCssText().replace("\n","")
+            else:
+                raise ValueError(f"Unrecognized CSS selector {name}")
         if self.verbose:
             self.reportSkippedChildren(def_node, skipped_children)
 
@@ -1458,7 +1508,7 @@ class OptimizableSvg:
         tag = OptimizableSvg.remove_namespace(def_node.tag)
         id = def_node.attrib["id"] if "id" in def_node.attrib else "<No ID>"
         if self.verbose:
-            print(self.offset_str("Parsing {}#{}".format(tag, id)))
+            print(self.offset_str(f"Parsing {tag}#{id}"))
 
         self.depth += 1
 
@@ -1498,7 +1548,7 @@ class OptimizableSvg:
         style_dict={}
         if "style" in stop.attrib:
             style_dict={item.split(":")[0]:item.split(":")[1] for item in stop.attrib["style"].split(";") if len(item)>0}
-        param_dict.update(style_dict)
+        param_dict |= style_dict
 
         offset=OptimizableSvg.parseOpacity(param_dict["offset"])
         color=OptimizableSvg.parse_color(param_dict["stop-color"])

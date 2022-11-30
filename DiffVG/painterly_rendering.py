@@ -22,9 +22,9 @@ gamma = 1.0
 def main(args):
     # Use GPU if available
     pydiffvg.set_use_gpu(torch.cuda.is_available())
-    
+
     perception_loss = ttools.modules.LPIPS().to(pydiffvg.get_device())
-    
+
     #target = torch.from_numpy(skimage.io.imread('imgs/lena.png')).to(torch.float32) / 255.0
     target = torch.from_numpy(skimage.io.imread(args.target)).to(torch.float32) / 255.0
     target = target.pow(gamma)
@@ -35,26 +35,25 @@ def main(args):
     canvas_width, canvas_height = target.shape[3], target.shape[2]
     num_paths = args.num_paths
     max_width = args.max_width
-    
+
     random.seed(1234)
     torch.manual_seed(1234)
-    
+
     shapes = []
     shape_groups = []
-    if args.use_blob:
-        for i in range(num_paths):
+    radius = 0.05
+    for _ in range(num_paths):
+        points = []
+        if args.use_blob:
             num_segments = random.randint(3, 5)
             num_control_points = torch.zeros(num_segments, dtype = torch.int32) + 2
-            points = []
             p0 = (random.random(), random.random())
             points.append(p0)
             for j in range(num_segments):
-                radius = 0.05
                 p1 = (p0[0] + radius * (random.random() - 0.5), p0[1] + radius * (random.random() - 0.5))
                 p2 = (p1[0] + radius * (random.random() - 0.5), p1[1] + radius * (random.random() - 0.5))
                 p3 = (p2[0] + radius * (random.random() - 0.5), p2[1] + radius * (random.random() - 0.5))
-                points.append(p1)
-                points.append(p2)
+                points.extend((p1, p2))
                 if j < num_segments - 1:
                     points.append(p3)
                     p0 = p3
@@ -71,16 +70,12 @@ def main(args):
                                                                         random.random(),
                                                                         random.random(),
                                                                         random.random()]))
-            shape_groups.append(path_group)
-    else:
-        for i in range(num_paths):
+        else:
             num_segments = random.randint(1, 3)
             num_control_points = torch.zeros(num_segments, dtype = torch.int32) + 2
-            points = []
             p0 = (random.random(), random.random())
             points.append(p0)
-            for j in range(num_segments):
-                radius = 0.05
+            for _ in range(num_segments):
                 p1 = (p0[0] + radius * (random.random() - 0.5), p0[1] + radius * (random.random() - 0.5))
                 p2 = (p1[0] + radius * (random.random() - 0.5), p1[1] + radius * (random.random() - 0.5))
                 p3 = (p2[0] + radius * (random.random() - 0.5), p2[1] + radius * (random.random() - 0.5))
@@ -103,11 +98,10 @@ def main(args):
                                                                           random.random(),
                                                                           random.random(),
                                                                           random.random()]))
-            shape_groups.append(path_group)
-    
+        shape_groups.append(path_group)
     scene_args = pydiffvg.RenderFunction.serialize_scene(\
         canvas_width, canvas_height, shapes, shape_groups)
-    
+
     render = pydiffvg.RenderFunction.apply
     img = render(canvas_width, # width
                  canvas_height, # height
@@ -128,25 +122,24 @@ def main(args):
         for path in shapes:
             path.stroke_width.requires_grad = True
             stroke_width_vars.append(path.stroke_width)
-    if args.use_blob:
-        for group in shape_groups:
+    for group in shape_groups:
+        if args.use_blob:
             group.fill_color.requires_grad = True
             color_vars.append(group.fill_color)
-    else:
-        for group in shape_groups:
+        else:
             group.stroke_color.requires_grad = True
             color_vars.append(group.stroke_color)
-    
+
     # Optimize
     points_optim = torch.optim.Adam(points_vars, lr=1.0)
-    if len(stroke_width_vars) > 0:
+    if stroke_width_vars:
         width_optim = torch.optim.Adam(stroke_width_vars, lr=0.1)
     color_optim = torch.optim.Adam(color_vars, lr=0.01)
     # Adam iterations.
     for t in range(args.num_iter):
         print('iteration:', t)
         points_optim.zero_grad()
-        if len(stroke_width_vars) > 0:
+        if stroke_width_vars:
             width_optim.zero_grad()
         color_optim.zero_grad()
         # Forward pass: render the image.
@@ -162,7 +155,10 @@ def main(args):
         # Compose img with white background
         img = img[:, :, 3:4] * img[:, :, :3] + torch.ones(img.shape[0], img.shape[1], 3, device = pydiffvg.get_device()) * (1 - img[:, :, 3:4])
         # Save the intermediate render.
-        pydiffvg.imwrite(img.cpu(), 'results/painterly_rendering/iter_{}.png'.format(t), gamma=gamma)
+        pydiffvg.imwrite(
+            img.cpu(), f'results/painterly_rendering/iter_{t}.png', gamma=gamma
+        )
+
         img = img[:, :, :3]
         # Convert img from HWC to NCHW
         img = img.unsqueeze(0)
@@ -172,29 +168,34 @@ def main(args):
         else:
             loss = (img - target).pow(2).mean()
         print('render loss:', loss.item())
-    
+
         # Backpropagate the gradients.
         loss.backward()
 
         # Take a gradient descent step.
         points_optim.step()
-        if len(stroke_width_vars) > 0:
+        if stroke_width_vars:
             width_optim.step()
         color_optim.step()
-        if len(stroke_width_vars) > 0:
+        if stroke_width_vars:
             for path in shapes:
                 path.stroke_width.data.clamp_(1.0, max_width)
-        if args.use_blob:
-            for group in shape_groups:
+        for group in shape_groups:
+            if args.use_blob:
                 group.fill_color.data.clamp_(0.0, 1.0)
-        else:
-            for group in shape_groups:
+            else:
                 group.stroke_color.data.clamp_(0.0, 1.0)
 
         if t % 10 == 0 or t == args.num_iter - 1:
-            pydiffvg.save_svg('results/painterly_rendering/iter_{}.svg'.format(t),
-                              canvas_width, canvas_height, shapes, shape_groups)
-    
+            pydiffvg.save_svg(
+                f'results/painterly_rendering/iter_{t}.svg',
+                canvas_width,
+                canvas_height,
+                shapes,
+                shape_groups,
+            )
+
+
     # Render the final result.
     img = render(target.shape[1], # width
                  target.shape[0], # height
